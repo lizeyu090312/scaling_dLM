@@ -1,0 +1,23 @@
+torch==2.8.0
+numpy==2.2.6
+einops>=0.7.0
+transformers==4.54.1
+huggingface-hub==0.36.2
+muon-optimizer==0.1.0
+
+datasets==4.8.5
+pyarrow==24.0.0
+datasketch==2.0.0
+
+# inherited from orig ELF
+sacrebleu>=2.4.0
+rouge-score>=0.1.2
+
+math-verify[antlr4_13_2]==0.9.0
+
+PyYAML>=6.0.1
+tqdm>=4.66.0
+wandb>=0.16.6
+
+# Code scoring: the container recipe installs pinned EvalPlus and its dependencies.
+# Apptainer is a separate system prerequisite, not a Python package.

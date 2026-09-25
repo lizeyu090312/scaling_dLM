@@ -1,0 +1,73 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+%files
+    scripts/eval_code.py /opt/eval_code.py
+    scripts/eval_code_variants.py /opt/eval_code_variants.py
+    scripts/eval_mbpp500.py /opt/eval_mbpp500.py
+
+%post
+    apt-get update
+    apt-get install -y --no-install-recommends git
+    rm -rf /var/lib/apt/lists/*
+
+    python -m pip install --no-cache-dir --upgrade pip
+    python -m pip install --no-cache-dir \
+        "git+https://github.com/evalplus/evalplus.git@26d6d00bb1fd0fa37f39c99d5290da67891d1c5e"
+
+    mkdir -p /input /scratch /opt/evalplus_data /opt/evalplus_cache
+    python - <<'PY'
+import gzip
+import shutil
+import urllib.request
+
+releases = {
+    "/opt/evalplus_data/HumanEvalPlus-v0.1.10.jsonl": (
+        "https://github.com/evalplus/humanevalplus_release/releases/download/"
+        "v0.1.10/HumanEvalPlus.jsonl.gz"
+    ),
+    "/opt/evalplus_data/MbppPlus-v0.2.0.jsonl": (
+        "https://github.com/evalplus/mbppplus_release/releases/download/"
+        "v0.2.0/MbppPlus.jsonl.gz"
+    ),
+}
+for destination, url in releases.items():
+    archive = destination + ".gz"
+    urllib.request.urlretrieve(url, archive)
+    with gzip.open(archive, "rb") as source, open(destination, "wb") as target:
+        shutil.copyfileobj(source, target)
+PY
+
+    export XDG_CACHE_HOME=/opt/evalplus_cache
+    export HUMANEVAL_OVERRIDE_PATH=/opt/evalplus_data/HumanEvalPlus-v0.1.10.jsonl
+    export MBPP_OVERRIDE_PATH=/opt/evalplus_data/MbppPlus-v0.2.0.jsonl
+    python - <<'PY'
+from evalplus.data import (
+    get_human_eval_plus,
+    get_human_eval_plus_hash,
+    get_mbpp_plus,
+    get_mbpp_plus_hash,
+)
+from evalplus.eval._special_oracle import MBPP_OUTPUT_NOT_NONE_TASKS
+from evalplus.evaluate import get_groundtruth
+
+humaneval = get_human_eval_plus(version="v0.1.10")
+mbpp = get_mbpp_plus(version="v0.2.0")
+get_groundtruth(humaneval, get_human_eval_plus_hash(), [])
+get_groundtruth(mbpp, get_mbpp_plus_hash(), MBPP_OUTPUT_NOT_NONE_TASKS)
+PY
+
+%environment
+    export XDG_CACHE_HOME=/opt/evalplus_cache
+    export HUMANEVAL_OVERRIDE_PATH=/opt/evalplus_data/HumanEvalPlus-v0.1.10.jsonl
+    export MBPP_OVERRIDE_PATH=/opt/evalplus_data/MbppPlus-v0.2.0.jsonl
+    export EVALPLUS_MAX_MEMORY_BYTES=6442450944
+
+%labels
+    EvalPlusCommit 26d6d00bb1fd0fa37f39c99d5290da67891d1c5e
+    HumanEvalPlusVersion v0.1.10
+    MbppPlusVersion v0.2.0
+    PythonVersion 3.11
+
+%runscript
+    exec python /opt/eval_code.py "$@"

@@ -1,0 +1,136 @@
+# Code: ELF-L REPA+REG
+# Run commands from the repository root.
+
+# Dataset and sequence lengths
+data_path: data/opencodeinstruct-python-qwen3-embedding-0.6b-input512-max1024-v1/train
+eval_data_path:
+- name: mbppplus_test
+  path: data/opencodeinstruct-python-qwen3-embedding-0.6b-input512-max1024-v1/mbppplus_test
+  num_samples: 378
+- name: humanevalplus_test
+  path: data/opencodeinstruct-python-qwen3-embedding-0.6b-input512-max1024-v1/humanevalplus_test
+  num_samples: 164
+max_length: 1024
+max_input_length: 512
+pad_token: eos
+use_model_attention_mask: false
+
+# Tokenizer and frozen encoder
+tokenizer_name: Qwen/Qwen3-Embedding-0.6B
+encoder_model_name: Qwen/Qwen3-0.6B-Base
+encoder_dim: 1024
+encoder_layer: 20
+latent_mean: 0.0
+latent_std: 1.0
+
+# ELF architecture
+model: ELF-L
+bottleneck_dim: 128
+num_time_tokens: 4
+num_self_cond_cfg_tokens: 4
+num_model_mode_tokens: 4
+attn_dropout: 0.0
+proj_dropout: 0.0
+
+# REPA auxiliary alignment; REPA stops after epoch 8 of 12
+repa_enabled: true
+repa_depth: 8
+repa_t_min: 0.0
+repa_t_max: 1.0
+repa_projector_dim: 2048
+repa_projector_layers: 3
+repa_projector_type: mlp
+repa_strength: 0.5
+repa_end_fraction: 0.6666666666666666
+repa_align_decoder_rows: true
+repa_loss_type: cos_sim
+repa_teacher_model_name: Qwen/Qwen3-1.7B-Base
+repa_teacher_layer: 20
+repa_teacher_dim: 2048
+repa_teacher_input_format: raw
+repa_prompt_loss_weight: 0.0
+repa_response_loss_weight: 1.0
+repa_shift: 0
+repa_reg_target_source: repa
+
+# REG semantic token
+reg_enabled: true
+reg_projection_topology: shared_text
+reg_loss_weight: 0.1
+reg_teacher_layer: 24
+reg_teacher_dim: 2048
+reg_teacher_pooling: last
+
+# Denoiser objective
+denoiser_p_mean: -1.5
+denoiser_p_std: 0.8
+denoiser_noise_scale: 2.0
+t_eps: 0.05
+time_schedule: logit_normal
+
+# Decoder objective
+decoder_prob: 0.2
+decoder_noise_scale: 1.0
+decoder_p_mean: 0.8
+decoder_p_std: 0.8
+
+# Conditioning
+label_drop_prob: 0.0
+self_cond_prob: 0.5
+self_cond_cfg_min: 0.5
+self_cond_cfg_max: 5.0
+
+# Optimizer and training endpoint
+epochs: 12
+global_batch_size: 512
+batch_size: 16
+blr: 0.001
+lr: 0.002
+lr_schedule: constant
+min_lr: 0.0
+weight_decay: 0.0
+warmup_steps: -1
+warmup_epochs: 0.5
+optimizer: muon
+group_by_length: false
+
+# EMA weights
+ema_decay1:
+- 0.9999
+- 0.999
+ema_warmup_updates: 1000
+
+# Precision and memory
+use_bf16: true
+use_compile: false
+gradient_checkpointing: false
+
+# Training-time evaluation (headline evaluation uses the separate scripts)
+sampling_configs_path: configs/sampling/training.yml
+generation_batch_size: 20
+num_samples: 378
+conditional_eval_metric: evalplus
+training_generation_ema: null
+truncate_generation: false
+online_eval: false
+
+# Logging and checkpoint frequency (epochs)
+log_freq: 100
+save_freq: 0.5
+eval_freq: 0.5
+
+# Output and initialization
+output_dir: outputs/code_elf_l_repa_reg
+resume: null
+resume_only_weights: null
+resume_only_weights_ema: null
+
+# Optional experiment tracking
+use_wandb: false
+wandb_project: elf-reg
+wandb_entity: null
+wandb_run_name: code_elf_l_repa_reg
+
+# Random seed and data loading
+seed: 42
+num_workers: 8
