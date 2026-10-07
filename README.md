@@ -1,6 +1,12 @@
 # ELF-REG: Scaling Continuous Diffusion Language Models to Reasoning Tasks
 
-This repository is the official repository for "ELF-REG: Scaling Continuous Diffusion Language Models to Reasoning Tasks". The implementation builds on the PyTorch version of [ELF: Embedded Language Flows](https://github.com/lillian039/ELF). We are grateful for the authors of ELF for open-sourcing their training and evaluation code.
+[![arXiv](https://img.shields.io/badge/arXiv-2609.29102-b31b1b.svg)](https://arxiv.org/abs/2609.29102)&nbsp;
+[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-ELF--REG-yellow.svg)](https://huggingface.co/zl310/elf-reg)&nbsp;
+[![Website](https://img.shields.io/badge/Website-ELF--REG-blue.svg)](https://lizeyu090312.github.io/blog/elf-reg/)&nbsp;
+
+This is the official implementation of "ELF-REG: Scaling Continuous Diffusion Language Models to Reasoning Tasks". The implementation builds on the PyTorch version of [ELF: Embedded Language Flows](https://github.com/lillian039/ELF). We thank the authors of ELF for open-sourcing their training and evaluation code. 
+
+**TL;DR:** We extend ELF, a fully continuous diffusion language model, to mathematical reasoning and code generation using representation alignment and entanglement (REPA+REG). We also analyse early-stop generation, which achieves strong few-step performance without dedicated few-step training.
 
 Download the prepared datasets and checkpoints to the paths below.
 
@@ -126,7 +132,7 @@ When training using the code dataset, periodic training-time evaluation saves ge
 
 The `evaluate_*` scripts reproduce the headline early-stop denoising process. The launcher's `eval` mode provides the original full-span evaluator; use the commands below to reproduce Tables 1 and 2.
 
-Each command defaults to seeds 42 through 57, EMA 0.9999, ODE sampling, and early-stop ratio 8. It takes `NFE - 1` denoiser steps, then decodes the predicted-clean state. The NFE includes the decoder call. We use CFG=1; we use SCCFG=3 for GSM8K and SCCFG=2 for MATH-500 and code.
+Unless `--sampler clean_prediction_renoising` is specified, generation defaults to seeds 42–57, EMA 0.9999, ODE sampling, and early-stop ratio 8. It takes `NFE - 1` denoiser steps, then decodes the predicted-clean state. The NFE includes the decoder call. We use CFG=1; we use SCCFG=3 for GSM8K and SCCFG=2 for MATH-500 and code.
 
 The commands below use pretrained checkpoints from the [checkpoint table](#prepared-data-and-checkpoints). For models you train yourself, use the appropriate path.
 
@@ -173,11 +179,29 @@ python scripts/evaluate_code.py report --output_dir outputs/eval_humaneval_elf_r
 
 Use `--benchmark mbpp` for MBPP-378 or `--benchmark mbpp500` for MBPP-500 (remember to change the output directory). By default, we use 128 NFE.
 
+### Clean-prediction re-noising
+
+Use `--sampler clean_prediction_renoising` for an improved sampling method with p=0.5 and eta=1.2:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/evaluate_gsm8k.py generate \
+  --sampler clean_prediction_renoising \
+  --config configs/training/gsm8k_elf_l_repa_reg.yml \
+  --checkpoint_path checkpoints/gsm8k/elf_l_repa_reg/checkpoint_56352 \
+  --output_dir outputs/eval_gsm8k_clean_prediction_renoising
+
+python scripts/evaluate_gsm8k.py report --output_dir outputs/eval_gsm8k_clean_prediction_renoising
+```
+
+The sampler reconstructs the noisy state from the predicted clean state and fresh noise, using a power schedule for denoising. By default for this sampler, we generate using seeds 42–45 and NFE 4, 8, 16, 32, 64 for GSM8K. The same flag works with `evaluate_math500.py` and `evaluate_code.py`, which also include NFE 128; existing code `score` and `report` commands apply. Both baseline and REPA+REG checkpoints are supported.
+
+You can override `--seeds` and `--nfe` (NFE must be at least 3). To compare the clean-prediction re-noising sampler and the headline logit-normal time grid sampler with Euler updates, use `--sampler original_grid_euler --seeds 42 43 44 45 --nfe 4 8 16 32 64` (for MATH-500 and code, include 128 in the NFE list to match the re-noising sampler’s defaults). Without `--sampler`, the existing defaults for the headline sampler apply.
+
 ### Reports and reference results
 
 The generation script accepts `--seeds`, `--nfe`, `--batch_size`, and `--data_path` overrides. For example, `--seeds 42 --nfe 4` runs one seed at a smaller budget. The `report` command writes mean pass@1, its standard deviation across seeds, and subset pass@k to `metrics.json`.
 
-These are the expected results (standard deviations in parentheses):
+The following reference pass@1 accuracy use the default headline sampler `original_grid_euler` with seeds 42–57 (standard deviations in parentheses):
 
 | Model | GSM8K, 64 NFE | MATH-500, 128 NFE |
 | --- | ---: | ---: |

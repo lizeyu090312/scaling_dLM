@@ -16,6 +16,7 @@ from transformers import AutoTokenizer
 
 import headline_common as core
 from configs.config import load_config_from_yaml
+from utils import clean_prediction_renoising
 import eval_code
 import eval_code_variants
 import eval_mbpp500
@@ -73,6 +74,7 @@ def read_generations(folder, manifest, seed, nfe):
 @torch.no_grad()
 def generate(args):
     benchmark = args.benchmark
+    renoising = args.sampler == "clean_prediction_renoising"
     config = load_config_from_yaml(args.config)
     config.truncate_generation = False
     if config.model not in ("ELF-B", "ELF-L") or (benchmark != "gsm8k" and config.model != "ELF-L"):
@@ -110,6 +112,13 @@ def generate(args):
                     max_input_length=config.max_input_length, pad_token=config.pad_token,
                     use_model_attention_mask=False, truncate_generation=False,
                     rng_protocol="per-example text/REG noise; seed+3000000 logit-normal grid")
+    if renoising:
+        manifest.update(sampler=args.sampler, sampling_method="clean_prediction_renoising",
+                        time_schedule="power", reference_time_schedule=config.time_schedule,
+                        power=0.5, eta=1.2, reference_rho=8,
+                        stochastic_stream_offsets=[4_000_000, 5_000_000],
+                        rng_protocol="per-example text/REG noise; seed+3000000 reference grid; "
+                                     "seed+offset+1009*example_id re-noising streams")
     if benchmark not in ("gsm8k", "math500"):
         manifest["task_ids"] = list(dataset["task_id"])
         if len(set(manifest["task_ids"])) != len(dataset):
@@ -127,8 +136,12 @@ def generate(args):
             for n in args.nfe:
                 read_generations(folder, manifest, seed, n)
             continue
-        schedules = {8*n: core.sampling_steps(config, seed=seed, device=device,
-                     dtype=next(model.parameters()).dtype, n_steps=8*n-1) for n in args.nfe}
+        if renoising:
+            schedules = {8*n: clean_prediction_renoising.schedule(
+                config, seed, n, device, next(model.parameters()).dtype) for n in args.nfe}
+        else:
+            schedules = {8*n: core.sampling_steps(config, seed=seed, device=device,
+                         dtype=next(model.parameters()).dtype, n_steps=8*n-1) for n in args.nfe}
         records = {n: [] for n in args.nfe}
         for batch in core.dataloader(dataset, config, tokenizer, batch_size=batch_size):
             values = core.prepare_generation(batch, config, tokenizer, encoder, encoder_config, model, seed=seed)
@@ -137,8 +150,17 @@ def generate(args):
                 values["problem_group_ids"] = [dataset[i]["problem_group_id"] for i in values["indices"]]
             elif benchmark != "gsm8k":
                 values["task_ids"] = list(batch["task_id"])
-            rows, _ = core.generate_batch(model, config, tokenizer, values, schedules, requested,
-                sample_fn=partial(core.sample, self_cond_cfg_scale=manifest["self_cond_cfg"]), decode_fn=decode)
+            if renoising:
+                rows = []
+                for nfe in args.nfe:
+                    x, reg_x = clean_prediction_renoising.sample(
+                        model, config, values, schedules[8*nfe], seed=seed,
+                        self_cond_cfg=manifest["self_cond_cfg"])
+                    decoded, _, _ = decode(model, config, tokenizer, values, x, reg_x)
+                    rows.extend(dict(row, nfe=nfe) for row in decoded)
+            else:
+                rows, _ = core.generate_batch(model, config, tokenizer, values, schedules, requested,
+                    sample_fn=partial(core.sample, self_cond_cfg_scale=manifest["self_cond_cfg"]), decode_fn=decode)
             for row in rows:
                 nfe = row["nfe"]
                 records[nfe].append(dict(metadata(manifest, seed, nfe), **row))
@@ -217,8 +239,10 @@ def main(benchmark=None):
     gen.add_argument("--output_dir", required=True)
     gen.add_argument("--data_path")
     gen.add_argument("--batch_size", type=int)
-    gen.add_argument("--seeds", nargs="+", type=int, default=list(range(42, 58)))
-    gen.add_argument("--nfe", nargs="+", type=int, default=[64 if benchmark == "gsm8k" else 128])
+    gen.add_argument("--sampler", choices=("original_grid_euler", "clean_prediction_renoising"),
+                     default="original_grid_euler")
+    gen.add_argument("--seeds", nargs="+", type=int)
+    gen.add_argument("--nfe", nargs="+", type=int)
     if benchmark is None:
         gen.add_argument("--benchmark", choices=("mbpp500", "mbpp", "humaneval"), required=True)
         score = commands.add_parser("score")
@@ -229,6 +253,14 @@ def main(benchmark=None):
     commands.add_parser("report").add_argument("--output_dir", required=True)
     args = parser.parse_args()
     if args.command == "generate":
+        renoising = args.sampler == "clean_prediction_renoising"
+        if args.seeds is None:
+            args.seeds = list(range(42, 46 if renoising else 58))
+        if args.nfe is None:
+            args.nfe = ([4, 8, 16, 32, 64] + ([] if args.benchmark == "gsm8k" else [128])
+                        if renoising else [64 if args.benchmark == "gsm8k" else 128])
+        if renoising and min(args.nfe) < 3:
+            parser.error("Clean-prediction re-noising requires NFE >= 3")
         if (len(set(args.seeds)) != len(args.seeds) or len(set(args.nfe)) != len(args.nfe)
                 or min(args.nfe) < 2 or (args.batch_size is not None and args.batch_size <= 0)):
             parser.error("Use unique seeds/NFE values, NFE >= 2, and a positive batch size")
